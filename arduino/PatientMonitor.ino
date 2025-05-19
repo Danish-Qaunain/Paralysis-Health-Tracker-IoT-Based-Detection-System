@@ -1,134 +1,184 @@
+#include <Wire.h> 
+#include <LiquidCrystal_I2C.h>
 #include <SoftwareSerial.h>
-#include <Wire.h>
-#include <MAX30100_PulseOximeter.h>
+#include <DFRobotDFPlayerMini.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
-// Pin definitions
-#define GSM_RX 2
-#define GSM_TX 3
-#define TEMP_SENSOR_PIN 4
-#define EMG_SENSOR_PIN A0
+// Pin definitions for ADXL335
+const int xPin = A0;
+const int yPin = A1;
+const int zPin = A2;
 
-// Initialize objects
-SoftwareSerial gsmSerial(GSM_RX, GSM_TX);
-PulseOximeter pox;
-OneWire oneWire(TEMP_SENSOR_PIN);
-DallasTemperature tempSensors(&oneWire);
+// Pin definition for LED
+const int ledPin = 13;
 
-// Constants
-const char* PATIENT_ID = "YOUR_PATIENT_ID";  // Replace with actual patient ID
-const char* SERVER_URL = "YOUR_SUPABASE_URL"; // Replace with your Supabase URL
-const char* API_KEY = "YOUR_SUPABASE_ANON_KEY"; // Replace with your Supabase anon key
+// GSM Module Pins
+const int gsmTx = 19;
+const int gsmRx = 18;
+SoftwareSerial gsm(gsmRx, gsmTx);
 
-// Variables
-float heartRate = 0;
-float bodyTemp = 0;
-float muscleActivity = 0;
-unsigned long lastReadingTime = 0;
-const unsigned long READ_INTERVAL = 5000; // Read every 5 seconds
+// DFPlayer Mini Pins
+const int dfTx = 10;
+const int dfRx = 11;
+SoftwareSerial dfPlayerSerial(dfRx, dfTx);
+DFRobotDFPlayerMini dfPlayer;
+
+// DS18B20 Temperature Sensor
+const int oneWireBus = 4;
+OneWire oneWire(oneWireBus);
+DallasTemperature sensors(&oneWire);
+
+// Flex Sensor Pins
+const int flex1 = A3;
+const int flex2 = A4;
+const int flex3 = A5;
+
+// AD8232 ECG Module Pins
+const int ecgPin = A6;
+const int loPlus = 7;
+const int loMinus = 8;
+
+// Fall detection threshold
+const float fallThreshold = 1.7;
+
+// Initialize LCD
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 void setup() {
   Serial.begin(9600);
-  gsmSerial.begin(9600);
+  pinMode(ledPin, OUTPUT);
+  pinMode(flex1, INPUT);
+  pinMode(flex2, INPUT);
+  pinMode(flex3, INPUT);
+  pinMode(ecgPin, INPUT);
+  pinMode(loPlus, INPUT);
+  pinMode(loMinus, INPUT);
+
+  gsm.begin(9600);
+  sendSMS("System Initialized: Monitoring Started!");
+
+  digitalWrite(ledPin, LOW);
+
+  lcd.init();
+  lcd.backlight();
+  displayMainScreen();
   
-  // Initialize sensors
-  if (!pox.begin()) {
-    Serial.println("MAX30100 initialization failed!");
-    while(1);
+  dfPlayerSerial.begin(9600);
+  if (!dfPlayer.begin(dfPlayerSerial)) {
+    Serial.println("DFPlayer Mini not detected!");
+  } else {
+    dfPlayer.volume(20);
   }
-  tempSensors.begin();
-  
-  // Initialize GSM
-  initGSM();
-  
-  Serial.println("System initialized!");
+
+  sensors.begin();
 }
 
 void loop() {
-  unsigned long currentTime = millis();
-  
-  if (currentTime - lastReadingTime >= READ_INTERVAL) {
-    // Read sensors
-    pox.update();
-    heartRate = pox.getHeartRate();
-    
-    tempSensors.requestTemperatures();
-    bodyTemp = tempSensors.getTempCByIndex(0);
-    
-    // Read EMG sensor (muscle activity)
-    muscleActivity = readEMG();
-    
-    // Send data if readings are valid
-    if (heartRate > 0 && bodyTemp > 0) {
-      sendData();
+  int xValue = analogRead(xPin);
+  int yValue = analogRead(yPin);
+  int zValue = analogRead(zPin);
+  float xVoltage = xValue * (5.0 / 1023.0);
+  float yVoltage = yValue * (5.0 / 1023.0);
+  float zVoltage = zValue * (5.0 / 1023.0);
+
+  sensors.requestTemperatures();
+  float temperature = sensors.getTempCByIndex(0);
+
+  int ecgValue = analogRead(ecgPin);
+  int leadOff = digitalRead(loPlus) || digitalRead(loMinus);
+
+  if (leadOff) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("ECG: Lead Off");
+  } else {
+    displayMainScreen();
+  }
+
+  delay(1000);
+
+  int flex1Value = analogRead(flex1);
+  int flex2Value = analogRead(flex2);
+  int flex3Value = analogRead(flex3);
+
+  Serial.print("Flex1: "); Serial.print(flex1Value);
+  Serial.print(" Flex2: "); Serial.print(flex2Value);
+  Serial.print(" Flex3: "); Serial.println(flex3Value);
+
+  if (xVoltage < fallThreshold || yVoltage < fallThreshold || zVoltage < fallThreshold) {
+    Serial.println("Fall detected! Activating alerts...");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Fall Detected!");
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(ledPin, HIGH);
+      delay(200);
+      digitalWrite(ledPin, LOW);
+      delay(200);
     }
-    
-    lastReadingTime = currentTime;
+    dfPlayer.play(1);
+    sendSMS("Fall Detected! Immediate attention required!");
+    delay(2000);
+    displayMainScreen();
+  } else if (temperature > 37.5) {
+    Serial.println("High temperature detected!");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Temp Alert!");
+    lcd.setCursor(0, 1);
+    lcd.print("T:");
+    lcd.print(temperature, 1);
+    lcd.print("C");
+    delay(2000);
+    displayMainScreen();
   }
-  
-  // Keep the pulse oximeter running
-  pox.update();
-}
 
-float readEMG() {
-  // Read EMG sensor multiple times and average
-  float total = 0;
-  for(int i = 0; i < 10; i++) {
-    total += analogRead(EMG_SENSOR_PIN);
-    delay(10);
+  if (flex1Value > 500) {
+    Serial.println("Request: I need food");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("I need food");
+    dfPlayer.play(2);
+    delay(3000);
+    displayMainScreen();
+  } else if (flex2Value > 500) {
+    Serial.println("Request: I need water");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("I need water");
+    dfPlayer.play(5);
+    delay(3000);
+    displayMainScreen();
+  } else if (flex3Value > 500) {
+    Serial.println("Request: Go to restroom");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Go to restroom");
+    dfPlayer.play(8);
+    delay(3000);
+    displayMainScreen();
   }
-  return total / 10.0;
+  delay(1000);
 }
 
-void initGSM() {
-  // Wait for GSM module to respond
-  delay(2000);
-  gsmSerial.println("AT");
-  delay(1000);
-  
-  // Configure GPRS settings
-  gsmSerial.println("AT+SAPBR=3,1,\"Contype\",\"GPRS\"");
-  delay(1000);
-  gsmSerial.println("AT+SAPBR=3,1,\"APN\",\"internet\""); // Replace with your carrier's APN
-  delay(1000);
-  gsmSerial.println("AT+SAPBR=1,1");
-  delay(2000);
+void sendSMS(String message) {
+  Serial.println("Sending SMS...");
+  gsm.println("AT+CMGF=1");
+  delay(200);
+  gsm.println("AT+CMGS=\"+919708380044\"");
+  delay(200);
+  gsm.print(message);
+  delay(200);
+  gsm.write(26);
+  delay(100);
+  Serial.println("SMS Sent!");
 }
 
-void sendData() {
-  String data = "{";
-  data += "\"patient_id\":\"" + String(PATIENT_ID) + "\",";
-  data += "\"heart_rate\":" + String(heartRate) + ",";
-  data += "\"body_temperature\":" + String(bodyTemp) + ",";
-  data += "\"muscle_activity\":" + String(muscleActivity);
-  data += "}";
-  
-  // Start HTTP request
-  gsmSerial.println("AT+HTTPINIT");
-  delay(1000);
-  gsmSerial.println("AT+HTTPPARA=\"CID\",1");
-  delay(1000);
-  gsmSerial.println("AT+HTTPPARA=\"URL\"," + String(SERVER_URL));
-  delay(1000);
-  gsmSerial.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-  delay(1000);
-  gsmSerial.println("AT+HTTPPARA=\"Authorization\",\"Bearer " + String(API_KEY) + "\"");
-  delay(1000);
-  
-  // Send data
-  gsmSerial.println("AT+HTTPDATA=" + String(data.length()) + ",10000");
-  delay(1000);
-  gsmSerial.println(data);
-  delay(1000);
-  
-  // Execute request
-  gsmSerial.println("AT+HTTPACTION=1"); // POST request
-  delay(5000);
-  
-  // End HTTP session
-  gsmSerial.println("AT+HTTPTERM");
-  delay(1000);
-  
-  Serial.println("Data sent: " + data);
+void displayMainScreen() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Paralysis Health");
+  lcd.setCursor(0, 1);
+  lcd.print("Tracker System");
 }
