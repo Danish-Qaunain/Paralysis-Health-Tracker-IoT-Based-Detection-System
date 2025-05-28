@@ -6,6 +6,7 @@ import Button from '../common/Button';
 import Alert from '../common/Alert';
 import Card from '../common/Card';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabase';
 
 const AdminLogin: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -22,37 +23,54 @@ const AdminLogin: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!username.trim() || !password.trim()) {
-      setError('Please enter both username and password');
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+
+  if (!username.trim() || !password.trim()) {
+    setError('Please enter both email and password');
+    return;
+  }
+
+  setLoading(true);
+  setError('');
+
+  try {
+    // Sign in using Supabase Auth
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+      email: username, // this should be email
+      password,
+    });
+
+    if (signInError) {
+      setError('Invalid email or password');
       return;
     }
-    
-    setLoading(true);
-    setError('');
-    
-    try {
-      const success = await login(username, password, 'admin');
-      
-      if (success) {
-        navigate('/admin/dashboard');
-      } else {
-        setError('Invalid username or password');
-      }
-    } catch (err) {
-      setError('An error occurred. Please try again.');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-  
-  const handleForgotPassword = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!recoveryEmail.trim()) {
-      setError('Please enter your email address');
+
+    const user = signInData.user;
+
+    // Get role from profiles table
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+
+    if (profileError || !profile) {
+      setError('User profile not found');
       return;
     }
+
+    if (profile.role === 'admin') {
+      navigate('/admin/dashboard');
+    } else {
+      setError('Access denied: not an admin');
+    }
+  } catch (err) {
+    console.error('Login error:', err);
+    setError('An error occurred. Please try again.');
+  } finally {
+    setLoading(false);
+  }
     
     // Simulate password recovery
     setLoading(true);
