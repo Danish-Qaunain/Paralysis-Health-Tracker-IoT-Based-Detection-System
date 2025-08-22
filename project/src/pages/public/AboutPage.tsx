@@ -20,26 +20,14 @@ const AboutPage: React.FC = () => {
     {
       id: 3,
       name: "MD DANISH QAUNAIN",
-      title: "TEAM LEAD",
+      title: "TEAM LEAD, TECHNICAL LEAD ",
       image: "https://s3.ap-south-1.amazonaws.com/neurohealthlife.site/Danish.jpg",
     },
     { 
       id: 4,
       name: "HRIDHI KUMARI",
-      title: "TECHNICAL LEAD",
-      image: "https://s3.ap-south-1.amazonaws.com/neurohealthlife.site/Hridhi.jpg"
-    },
-    {
-      id: 5,
-      name: "BAIJENTI HEMROAM",
       title: "TEAM MEMBER",
-      image: "https://s3.ap-south-1.amazonaws.com/neurohealthlife.site/Baijanit.jpg"
-    },
-    {
-      id: 6,
-      name: "ANAMIKA MURMU",
-      title: "TEAM MEMBER", 
-      image: "https://s3.ap-south-1.amazonaws.com/neurohealthlife.site/Anamika.jpg"
+      image: "https://s3.ap-south-1.amazonaws.com/neurohealthlife.site/Hridhi.jpg"
     }
   ];
 
